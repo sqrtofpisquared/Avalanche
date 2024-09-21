@@ -3,6 +3,12 @@ syntax = "proto3";
 package avalanchecore;
 option go_package = "github.com/sqrtofpisqaured/avalanche/avalanchecore";
 
+message CMNMessage {
+  oneof message {
+    AvalancheClient announce = 1;
+  }
+}
+
 message AvalancheClient {
   uint32 version = 1;
   string client_id = 2;

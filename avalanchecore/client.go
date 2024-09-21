@@ -34,18 +34,11 @@ type localClient struct {
 func InitializeClient(cmnAddress string) {
 	var c localClient
 
-	addr, err := net.ResolveUDPAddr("udp", cmnAddress)
-	if err != nil {
-		// TODO
-	}
+	cmn := cmnConnect(cmnAddress)
 
-	// Send multicast announcement packet
-	if err := SendAnnouncement(c.avalancheClient, addr); err != nil {
-		// TODO
+	if err := cmn.sendAnnouncement(c.avalancheClient); err != nil {
+		// TODO handle announcement failure
 	}
-
-	// Begin listening on cmn
-	// TODO
 
 }
 
