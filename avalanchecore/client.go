@@ -1,6 +1,7 @@
 package avalanchecore
 
 import (
+	"avalanchecore/gen/proto/github.com/sqrtofpisqaured/avalanche/avalanchecore"
 	"github.com/google/uuid"
 	"net"
 )
@@ -14,7 +15,7 @@ type remoteStream struct {
 
 type avalancheClient struct {
 	ClientID     uuid.UUID
-	Destination  net.Addr
+	Destination  net.UDPAddr
 	Capabilities []ClientCapability
 	ASPVersion   uint8
 }
@@ -35,11 +36,38 @@ func InitializeClient(cmnAddress string) {
 	var c localClient
 
 	cmn := cmnConnect(cmnAddress)
+	c.Destination = *cmn.LocalAddr
+	c.ClientID = uuid.New()
 
-	if err := cmn.sendAnnouncement(c.avalancheClient); err != nil {
-		// TODO handle announcement failure
+	go HandleMessage(cmn.MessagesReceived)
+
+	// TODO get capabilities of client (maybe pass them in?)
+
+	msg := avalanchecore.CMNMessage{
+		Message: &avalanchecore.CMNMessage_Announce{
+			Announce: &avalanchecore.AvalancheClient{
+				Version:      1,
+				ClientId:     c.ClientID.String(),
+				Destination:  c.Destination.String(),
+				Capabilities: []*avalanchecore.Capability{},
+			},
+		},
 	}
 
+	if err := cmn.broadcast(&msg); err != nil {
+		// TODO handle announcement failure
+	}
+}
+
+func HandleMessage(messages chan avalanchecore.CMNMessage) {
+	for {
+		m := <-messages
+
+		switch m.Message.(type) {
+		case *avalanchecore.CMNMessage_Announce:
+			// TODO update client table
+		}
+	}
 }
 
 func (client localClient) InitStream() AvalancheStream {
