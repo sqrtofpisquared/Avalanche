@@ -6,7 +6,12 @@ import (
 	"github.com/sqrtofpisquared/avalanche/avalanchecore/gen/proto/github.com/sqrtofpisqaured/avalanche/avalanchecore"
 	"math/rand"
 	"net"
+	"sync"
 	"time"
+)
+
+const (
+	AvalancheVersion = 1
 )
 
 type ClientCapability struct {
@@ -31,14 +36,16 @@ type remoteClient struct {
 
 type LocalClient struct {
 	avalancheClient
-	cmn         *ClientManagementNetwork
-	ClientTable map[uuid.UUID]*remoteClient
-	StreamTable map[uint16]remoteStream
+	cmn           *ClientManagementNetwork
+	clientTableMu sync.RWMutex
+	ClientTable   map[uuid.UUID]*remoteClient
+	StreamTable   map[uint16]remoteStream
 }
 
 func InitializeClient(cmnAddress string) (LocalClient, error) {
 	var c LocalClient
 	c.ClientTable = make(map[uuid.UUID]*remoteClient)
+	c.StreamTable = make(map[uint16]remoteStream)
 
 	fmt.Println("Attempting connection to CMN...")
 	cmn, err := cmnConnect(cmnAddress)
@@ -53,12 +60,18 @@ func InitializeClient(cmnAddress string) (LocalClient, error) {
 	errors := make(chan error)
 	go c.handleMessage(errors)
 
+	go func() {
+		for err := range errors {
+			fmt.Printf("Error: %v\n", err)
+		}
+	}()
+
 	// TODO get capabilities of client (maybe pass them in?)
 
 	msg := avalanchecore.CMNMessage{
 		Message: &avalanchecore.CMNMessage_Announce{
 			Announce: &avalanchecore.AvalancheClient{
-				Version:      1, // TODO central place to get the version?
+				Version:      AvalancheVersion,
 				ClientId:     c.ClientID.String(),
 				Destination:  c.Destination.String(),
 				Capabilities: []*avalanchecore.Capability{},
@@ -75,32 +88,39 @@ func InitializeClient(cmnAddress string) (LocalClient, error) {
 	return c, nil
 }
 
-func (client *LocalClient) presence() error {
+func (client *LocalClient) presence() {
 	for {
 		time.Sleep(1 * time.Minute)
 		msg := avalanchecore.CMNMessage{
 			Message: &avalanchecore.CMNMessage_Presence{
 				Presence: &avalanchecore.Presence{
-					Version:     1,
+					Version:     AvalancheVersion,
 					ClientId:    client.ClientID.String(),
 					Destination: client.Destination.String(),
 				},
 			},
 		}
 		if err := client.cmn.broadcast(&msg); err != nil {
-			return fmt.Errorf("Failed to send presence notification: %v\n", err)
+			fmt.Printf("Failed to send presence notification: %v\n", err)
+			continue
 		}
 		timeoutDuration := 10 * time.Minute
 		var deadClients []uuid.UUID
+
+		client.clientTableMu.RLock()
 		for _, v := range client.ClientTable {
 			if time.Now().Sub(v.LastSeenTime) > timeoutDuration {
 				deadClients = append(deadClients, v.ClientID)
 			}
 		}
+		client.clientTableMu.RUnlock()
+
+		client.clientTableMu.Lock()
 		for _, id := range deadClients {
 			fmt.Printf("Client %v not seen for %v - removing from client table", id, timeoutDuration)
 			delete(client.ClientTable, id)
 		}
+		client.clientTableMu.Unlock()
 	}
 }
 
@@ -150,6 +170,7 @@ func (client *LocalClient) handleAnnounce(ann *avalanchecore.AvalancheClient) er
 
 	fmt.Printf("New client %v at %v\n", clientId, addr)
 
+	client.clientTableMu.Lock()
 	client.ClientTable[clientId] = &remoteClient{
 		avalancheClient: avalancheClient{
 			ClientID:     clientId,
@@ -160,6 +181,7 @@ func (client *LocalClient) handleAnnounce(ann *avalanchecore.AvalancheClient) er
 		LastSeenTime: time.Now(),
 		Quality:      LinkQuality{},
 	}
+	client.clientTableMu.Unlock()
 
 	delay := rand.Intn(50)
 	time.Sleep(time.Duration(delay) * time.Millisecond)
@@ -168,7 +190,7 @@ func (client *LocalClient) handleAnnounce(ann *avalanchecore.AvalancheClient) er
 	msg := avalanchecore.CMNMessage{
 		Message: &avalanchecore.CMNMessage_AnnounceReply{
 			AnnounceReply: &avalanchecore.AvalancheClient{
-				Version:      1, // TODO central place to get the version?
+				Version:      AvalancheVersion,
 				ClientId:     client.ClientID.String(),
 				Destination:  client.Destination.String(),
 				Capabilities: []*avalanchecore.Capability{},
@@ -196,6 +218,7 @@ func (client *LocalClient) handleAnnounceReply(p *avalanchecore.AvalancheClient)
 
 	fmt.Printf("Client registered in response %v at %v\n", clientId, addr)
 
+	client.clientTableMu.Lock()
 	client.ClientTable[clientId] = &remoteClient{
 		avalancheClient: avalancheClient{
 			ClientID:     clientId,
@@ -206,6 +229,7 @@ func (client *LocalClient) handleAnnounceReply(p *avalanchecore.AvalancheClient)
 		LastSeenTime: time.Now(),
 		Quality:      LinkQuality{},
 	}
+	client.clientTableMu.Unlock()
 
 	return nil
 }
@@ -220,7 +244,10 @@ func (client *LocalClient) handlePresence(p *avalanchecore.Presence) error {
 		return nil
 	}
 
+	client.clientTableMu.RLock()
 	_, ok := client.ClientTable[clientId]
+	client.clientTableMu.RUnlock()
+
 	if !ok {
 		// Client unknown - announce presence to client
 		addr, err := net.ResolveUDPAddr("udp", p.Destination)
@@ -231,7 +258,7 @@ func (client *LocalClient) handlePresence(p *avalanchecore.Presence) error {
 		msg := avalanchecore.CMNMessage{
 			Message: &avalanchecore.CMNMessage_Announce{
 				Announce: &avalanchecore.AvalancheClient{
-					Version:      1, // TODO central place to get the version?
+					Version:      AvalancheVersion,
 					ClientId:     client.ClientID.String(),
 					Destination:  client.Destination.String(),
 					Capabilities: []*avalanchecore.Capability{},
@@ -244,7 +271,9 @@ func (client *LocalClient) handlePresence(p *avalanchecore.Presence) error {
 		}
 		return nil
 	} else {
+		client.clientTableMu.Lock()
 		client.ClientTable[clientId].LastSeenTime = time.Now()
+		client.clientTableMu.Unlock()
 	}
 
 	return nil
