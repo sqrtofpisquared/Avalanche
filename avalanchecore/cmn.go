@@ -70,8 +70,6 @@ func (cmn *ClientManagementNetwork) broadcast(msg *avalanchecore.CMNMessage) err
 		}
 	}
 
-	msg.IsBroadcast = true
-
 	msgBytes, err := proto.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("Failed to serialize client message: %v\n", err)
@@ -88,15 +86,13 @@ func (cmn *ClientManagementNetwork) broadcast(msg *avalanchecore.CMNMessage) err
 	return nil
 }
 
-func (cmn *ClientManagementNetwork) send(msg *avalanchecore.CMNMessage, client avalancheClient) error {
+func (cmn *ClientManagementNetwork) send(msg *avalanchecore.CMNMessage, addr *net.UDPAddr) error {
 	// Open a new UDP
-	conn, err := net.DialUDP("udp", nil, &client.Destination)
+	conn, err := net.DialUDP("udp", nil, addr)
 	if err != nil {
-		return fmt.Errorf("Failed to connect to client %v at %v\n", client.ClientID, client.Destination)
+		return fmt.Errorf("Failed to connect to %v: %v\n", addr, err)
 	}
 	defer conn.Close()
-
-	msg.IsBroadcast = false
 
 	msgBytes, err := proto.Marshal(msg)
 	if err != nil {
@@ -105,10 +101,10 @@ func (cmn *ClientManagementNetwork) send(msg *avalanchecore.CMNMessage, client a
 
 	n, err := conn.Write(msgBytes)
 	if err != nil {
-		return fmt.Errorf("Failed to deliver message to %v: %v\n", client.Destination, err)
+		return fmt.Errorf("Failed to deliver message to %v: %v\n", addr, err)
 	}
 	if n != len(msgBytes) {
-		return fmt.Errorf("Incopmlete message sent to %v - %d/%d bytes sent\n", client.Destination, n, len(msgBytes))
+		return fmt.Errorf("Incopmlete message sent to %v - %d/%d bytes sent\n", addr, n, len(msgBytes))
 	}
 
 	return nil
@@ -135,8 +131,4 @@ func (cmn *ClientManagementNetwork) listen(conn *net.UDPConn) {
 
 		cmn.MessagesReceived <- &m
 	}
-}
-
-func (cmn *ClientManagementNetwork) getSyncedTime() uint64 {
-	return 0
 }
