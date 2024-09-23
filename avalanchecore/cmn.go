@@ -17,7 +17,7 @@ type ClientManagementNetwork struct {
 	BroadcastAddr    *net.UDPAddr
 	LocalAddr        *net.UDPAddr
 	Conn             *net.UDPConn
-	MessagesReceived chan avalanchecore.CMNMessage
+	MessagesReceived chan *avalanchecore.CMNMessage
 }
 
 func cmnConnect(address string) ClientManagementNetwork {
@@ -32,7 +32,7 @@ func cmnConnect(address string) ClientManagementNetwork {
 		// TODO
 	}
 
-	mChannel := make(chan avalanchecore.CMNMessage)
+	mChannel := make(chan *avalanchecore.CMNMessage)
 	cmn := ClientManagementNetwork{
 		BroadcastAddr:    bAddr,
 		LocalAddr:        lAddr,
@@ -126,8 +126,8 @@ func (cmn *ClientManagementNetwork) listenBroadcast() {
 }
 
 func (cmn *ClientManagementNetwork) handleReceivePacket(source *net.UDPAddr, data []byte, eChan chan<- error) {
-	var m avalanchecore.CMNMessage
-	err := proto.Unmarshal(data, &m)
+	var m *avalanchecore.CMNMessage
+	err := proto.Unmarshal(data, m)
 	if err != nil {
 		eChan <- fmt.Errorf("Failed to unmarshal message from %v: %v\n", source, err)
 	}
@@ -155,4 +155,8 @@ func (cmn *ClientManagementNetwork) listenLocal() {
 
 		go cmn.handleReceivePacket(source, data, errors)
 	}
+}
+
+func (cmn *ClientManagementNetwork) getSyncedTime() uint64 {
+	return 0
 }

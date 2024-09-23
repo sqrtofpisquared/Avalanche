@@ -2,8 +2,11 @@ package avalanchecore
 
 import (
 	"avalanchecore/gen/proto/github.com/sqrtofpisqaured/avalanche/avalanchecore"
+	"fmt"
 	"github.com/google/uuid"
+	"math/rand"
 	"net"
+	"time"
 )
 
 type ClientCapability struct {
@@ -26,27 +29,28 @@ type remoteClient struct {
 	Quality           LinkQuality
 }
 
-type localClient struct {
+type LocalClient struct {
 	avalancheClient
 	ClientTable map[uuid.UUID]remoteClient
 	StreamTable map[uint16]remoteStream
 }
 
-func InitializeClient(cmnAddress string) {
-	var c localClient
+func InitializeClient(cmnAddress string) LocalClient {
+	var c LocalClient
 
 	cmn := cmnConnect(cmnAddress)
 	c.Destination = *cmn.LocalAddr
 	c.ClientID = uuid.New()
 
-	go HandleMessage(cmn.MessagesReceived)
+	errors := make(chan error)
+	go c.HandleMessage(cmn.MessagesReceived, errors, &cmn)
 
 	// TODO get capabilities of client (maybe pass them in?)
 
 	msg := avalanchecore.CMNMessage{
 		Message: &avalanchecore.CMNMessage_Announce{
 			Announce: &avalanchecore.AvalancheClient{
-				Version:      1,
+				Version:      1, // TODO central place to get the version?
 				ClientId:     c.ClientID.String(),
 				Destination:  c.Destination.String(),
 				Capabilities: []*avalanchecore.Capability{},
@@ -57,20 +61,61 @@ func InitializeClient(cmnAddress string) {
 	if err := cmn.broadcast(&msg); err != nil {
 		// TODO handle announcement failure
 	}
+
+	return c
 }
 
-func HandleMessage(messages chan avalanchecore.CMNMessage) {
+func (client LocalClient) HandleMessage(messages <-chan *avalanchecore.CMNMessage, errors chan<- error, cmn *ClientManagementNetwork) {
 	for {
 		m := <-messages
 
 		switch m.Message.(type) {
 		case *avalanchecore.CMNMessage_Announce:
-			// TODO update client table
+			ann := m.GetAnnounce()
+			go func() {
+				err := client.HandleAnnounce(ann, cmn)
+				if err != nil {
+					errors <- fmt.Errorf("Failed to handle announcement %v\n", err)
+				}
+			}()
 		}
 	}
 }
 
-func (client localClient) InitStream() AvalancheStream {
+func (client LocalClient) HandleAnnounce(ann *avalanchecore.AvalancheClient, cmn *ClientManagementNetwork) error {
+	clientId, err := uuid.Parse(ann.ClientId)
+	if err != nil {
+		return fmt.Errorf("Invalid client ID received in announcment: %v\n", ann.ClientId)
+	}
+
+	addr, err := net.ResolveUDPAddr("udp", ann.Destination)
+	if err != nil {
+		return fmt.Errorf("Invalid destination address recieved in announcement %v\n", addr)
+	}
+
+	client.ClientTable[clientId] = remoteClient{
+		avalancheClient: avalancheClient{
+			ClientID:     clientId,
+			Destination:  *addr,
+			Capabilities: []ClientCapability{},
+			ASPVersion:   uint8(ann.Version),
+		},
+		LastSeenTimestamp: cmn.getSyncedTime(),
+		Quality:           LinkQuality{},
+	}
+	delay := rand.Intn(50)
+	time.Sleep(time.Duration(delay) * time.Millisecond)
+
+	// Construct announcement for unicast send
+	var msg avalanchecore.CMNMessage
+	err = cmn.send(&msg, client.ClientTable[clientId].avalancheClient)
+	if err != nil {
+	}
+
+	return nil
+}
+
+func (client LocalClient) InitStream() AvalancheStream {
 	var s AvalancheStream
 
 	// Communicate with CMN to agree on a new AvalancheStream ID

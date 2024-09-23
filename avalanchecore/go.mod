@@ -1,4 +1,4 @@
-module avalanchecore
+module github.com/sqrtofpisquared/avalanche/avalanchecore
 
 go 1.23.1
 

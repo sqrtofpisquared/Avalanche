@@ -391,7 +391,7 @@ The client discovery process in ASP is designed to be automatic, efficient, and 
 
 3. **Unicast Responses**
    - Existing clients respond directly to the new client with their own info packets.
-   - These responses are staggered using a random delay (0-500ms) to prevent network flooding.
+   - These responses are staggered using a random delay (0-50ms) to prevent network flooding.
 
 4. **Client Table Construction**
    - The new client builds its client table from the responses.
