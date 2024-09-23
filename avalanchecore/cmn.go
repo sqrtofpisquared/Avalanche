@@ -1,8 +1,8 @@
 package avalanchecore
 
 import (
-	"avalanchecore/gen/proto/github.com/sqrtofpisqaured/avalanche/avalanchecore"
 	"fmt"
+	"github.com/sqrtofpisquared/avalanche/avalanchecore/gen/proto/github.com/sqrtofpisqaured/avalanche/avalanchecore"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 	"google.golang.org/protobuf/proto"
@@ -15,46 +15,69 @@ type LinkQuality struct {
 
 type ClientManagementNetwork struct {
 	BroadcastAddr    *net.UDPAddr
+	BroadcastConn    *net.UDPConn
 	LocalAddr        *net.UDPAddr
-	Conn             *net.UDPConn
+	LocalConn        *net.UDPConn
 	MessagesReceived chan *avalanchecore.CMNMessage
 }
 
-func cmnConnect(address string) ClientManagementNetwork {
+func cmnConnect(address string) (ClientManagementNetwork, error) {
 	bAddr, err := net.ResolveUDPAddr("udp", address)
 	if err != nil {
-		// TODO
+		return ClientManagementNetwork{}, fmt.Errorf("Failed to resolve CMN multicast address\n")
 	}
 
-	// Setup a new local address
-	lAddr, err := net.ResolveUDPAddr("udp", ":0")
+	bConn, err := net.ListenMulticastUDP("udp", nil, bAddr)
 	if err != nil {
-		// TODO
+		return ClientManagementNetwork{}, fmt.Errorf("Could not listen on broadcast address: %v\n", err)
+	}
+
+	lConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(0, 0, 0, 0), Port: 0})
+	if err != nil {
+		return ClientManagementNetwork{}, fmt.Errorf("Could not listen on local address: %v\n", err)
 	}
 
 	mChannel := make(chan *avalanchecore.CMNMessage)
 	cmn := ClientManagementNetwork{
 		BroadcastAddr:    bAddr,
-		LocalAddr:        lAddr,
+		BroadcastConn:    bConn,
+		LocalAddr:        lConn.LocalAddr().(*net.UDPAddr),
+		LocalConn:        lConn,
 		MessagesReceived: mChannel,
 	}
-	go cmn.listenLocal()
-	go cmn.listenBroadcast()
+	go cmn.listen(cmn.LocalConn)
+	go cmn.listen(cmn.BroadcastConn)
 
-	return cmn
+	return cmn, nil
 }
 
 func (cmn *ClientManagementNetwork) broadcast(msg *avalanchecore.CMNMessage) error {
-	if cmn.Conn == nil {
-		return fmt.Errorf("Cannot send announcement as client management network is currently disconnected\n")
+	conn, err := net.DialUDP("udp", nil, cmn.BroadcastAddr)
+	if err != nil {
+		return fmt.Errorf("Could not resolve broadcast address when sending message: %v\n", err)
 	}
+	defer conn.Close()
+
+	if cmn.BroadcastAddr.IP.To4() != nil {
+		p := ipv4.NewPacketConn(conn)
+		if err := p.SetTTL(1); err != nil {
+			// TODO
+		}
+	} else {
+		p := ipv6.NewPacketConn(conn)
+		if err := p.SetHopLimit(1); err != nil {
+			// TODO
+		}
+	}
+
+	msg.IsBroadcast = true
 
 	msgBytes, err := proto.Marshal(msg)
 	if err != nil {
-		return fmt.Errorf("Failed to serialize client announcement message: %v\n", err)
+		return fmt.Errorf("Failed to serialize client message: %v\n", err)
 	}
 
-	n, err := cmn.Conn.Write(msgBytes)
+	n, err := conn.Write(msgBytes)
 	if err != nil {
 		return fmt.Errorf("Failed to broadcast message to CMN: %v\n", err)
 	}
@@ -73,6 +96,8 @@ func (cmn *ClientManagementNetwork) send(msg *avalanchecore.CMNMessage, client a
 	}
 	defer conn.Close()
 
+	msg.IsBroadcast = false
+
 	msgBytes, err := proto.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("Failed to marshal message\n")
@@ -89,71 +114,26 @@ func (cmn *ClientManagementNetwork) send(msg *avalanchecore.CMNMessage, client a
 	return nil
 }
 
-func (cmn *ClientManagementNetwork) listenBroadcast() {
-	// TODO explicitly handle ipv4/ipv6 multicast listener
-	conn, err := net.ListenMulticastUDP("udp", nil, cmn.BroadcastAddr)
-	if err != nil {
-		// TODO
-	}
-	cmn.Conn = conn
-	defer cmn.Conn.Close()
-
-	if cmn.BroadcastAddr.IP.To4() != nil {
-		p := ipv4.NewPacketConn(cmn.Conn)
-		if err := p.SetTTL(1); err != nil {
-			// TODO
-		}
-	} else {
-		p := ipv6.NewPacketConn(cmn.Conn)
-		if err := p.SetHopLimit(1); err != nil {
-			// TODO
-		}
-	}
-
-	var errors chan<- error
-
-	buffer := make([]byte, 1024)
-	for {
-		n, source, err := cmn.Conn.ReadFromUDP(buffer)
-		if err != nil {
-			// TODO
-			continue
-		}
-		data := make([]byte, n)
-		copy(data, buffer[:n])
-		go cmn.handleReceivePacket(source, data, errors)
-	}
-}
-
-func (cmn *ClientManagementNetwork) handleReceivePacket(source *net.UDPAddr, data []byte, eChan chan<- error) {
-	var m *avalanchecore.CMNMessage
-	err := proto.Unmarshal(data, m)
-	if err != nil {
-		eChan <- fmt.Errorf("Failed to unmarshal message from %v: %v\n", source, err)
-	}
-
-	cmn.MessagesReceived <- m
-}
-
-func (cmn *ClientManagementNetwork) listenLocal() {
-	conn, err := net.ListenUDP("udp", cmn.LocalAddr)
-	if err != nil {
-		// TODO
-	}
+func (cmn *ClientManagementNetwork) listen(conn *net.UDPConn) {
 	defer conn.Close()
 
 	var errors chan<- error
+
 	buffer := make([]byte, 1024)
 	for {
 		n, source, err := conn.ReadFromUDP(buffer)
 		if err != nil {
-			// TODO
 			continue
 		}
 		data := make([]byte, n)
 		copy(data, buffer[:n])
+		m := avalanchecore.CMNMessage{}
+		err = proto.Unmarshal(data, &m)
+		if err != nil {
+			errors <- fmt.Errorf("Failed to unmarshal message from %v: %v\n", source, err)
+		}
 
-		go cmn.handleReceivePacket(source, data, errors)
+		cmn.MessagesReceived <- &m
 	}
 }
 

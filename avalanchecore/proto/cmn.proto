@@ -4,8 +4,9 @@ package avalanchecore;
 option go_package = "github.com/sqrtofpisqaured/avalanche/avalanchecore";
 
 message CMNMessage {
+  bool is_broadcast = 1;
   oneof message {
-    AvalancheClient announce = 1;
+    AvalancheClient announce = 2;
   }
 }
 
