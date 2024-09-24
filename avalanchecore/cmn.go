@@ -21,20 +21,20 @@ type ClientManagementNetwork struct {
 	MessagesReceived chan *avalanchecore.CMNMessage
 }
 
-func cmnConnect(address string) (ClientManagementNetwork, error) {
+func cmnConnect(address string) (*ClientManagementNetwork, error) {
 	bAddr, err := net.ResolveUDPAddr("udp", address)
 	if err != nil {
-		return ClientManagementNetwork{}, fmt.Errorf("Failed to resolve CMN multicast address\n")
+		return nil, fmt.Errorf("Failed to resolve CMN multicast address\n")
 	}
 
 	bConn, err := net.ListenMulticastUDP("udp", nil, bAddr)
 	if err != nil {
-		return ClientManagementNetwork{}, fmt.Errorf("Could not listen on broadcast address: %v\n", err)
+		return nil, fmt.Errorf("Could not listen on broadcast address: %v\n", err)
 	}
 
 	lConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(0, 0, 0, 0), Port: 0})
 	if err != nil {
-		return ClientManagementNetwork{}, fmt.Errorf("Could not listen on local address: %v\n", err)
+		return nil, fmt.Errorf("Could not listen on local address: %v\n", err)
 	}
 
 	mChannel := make(chan *avalanchecore.CMNMessage)
@@ -48,7 +48,7 @@ func cmnConnect(address string) (ClientManagementNetwork, error) {
 	go cmn.listen(cmn.LocalConn)
 	go cmn.listen(cmn.BroadcastConn)
 
-	return cmn, nil
+	return &cmn, nil
 }
 
 func (cmn *ClientManagementNetwork) broadcast(msg *avalanchecore.CMNMessage) error {
@@ -113,12 +113,11 @@ func (cmn *ClientManagementNetwork) send(msg *avalanchecore.CMNMessage, addr *ne
 func (cmn *ClientManagementNetwork) listen(conn *net.UDPConn) {
 	defer conn.Close()
 
-	var errors chan<- error
-
 	buffer := make([]byte, 1024)
 	for {
 		n, source, err := conn.ReadFromUDP(buffer)
 		if err != nil {
+			fmt.Printf("Error receiving message from %v: %v\n", source, err)
 			continue
 		}
 		data := make([]byte, n)
@@ -126,7 +125,8 @@ func (cmn *ClientManagementNetwork) listen(conn *net.UDPConn) {
 		m := avalanchecore.CMNMessage{}
 		err = proto.Unmarshal(data, &m)
 		if err != nil {
-			errors <- fmt.Errorf("Failed to unmarshal message from %v: %v\n", source, err)
+			fmt.Printf("Failed to unmarshal message from %v: %v\n", source, err)
+			continue
 		}
 
 		cmn.MessagesReceived <- &m

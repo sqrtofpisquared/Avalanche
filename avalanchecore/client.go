@@ -36,13 +36,12 @@ type remoteClient struct {
 
 type LocalClient struct {
 	avalancheClient
-	cmn           *ClientManagementNetwork
 	clientTableMu sync.RWMutex
 	ClientTable   map[uuid.UUID]*remoteClient
 	StreamTable   map[uint16]remoteStream
 }
 
-func InitializeClient(cmnAddress string) (LocalClient, error) {
+func InitializeClient(cmnAddress string) (*LocalClient, error) {
 	var c LocalClient
 	c.ClientTable = make(map[uuid.UUID]*remoteClient)
 	c.StreamTable = make(map[uint16]remoteStream)
@@ -50,21 +49,13 @@ func InitializeClient(cmnAddress string) (LocalClient, error) {
 	fmt.Println("Attempting connection to CMN...")
 	cmn, err := cmnConnect(cmnAddress)
 	if err != nil {
-		return c, fmt.Errorf("Could not establish CMN connection: %v\n", err)
+		return nil, fmt.Errorf("Could not establish CMN connection: %v\n", err)
 	}
 
 	c.Destination = *cmn.LocalAddr
 	c.ClientID = uuid.New()
-	c.cmn = &cmn
 
-	errors := make(chan error)
-	go c.handleMessage(errors)
-
-	go func() {
-		for err := range errors {
-			fmt.Printf("Error: %v\n", err)
-		}
-	}()
+	go c.handleMessage(cmn)
 
 	// TODO get capabilities of client (maybe pass them in?)
 
@@ -80,15 +71,15 @@ func InitializeClient(cmnAddress string) (LocalClient, error) {
 	}
 
 	if err := cmn.broadcast(&msg); err != nil {
-		return c, fmt.Errorf("Announcement message failed to deliver: %v\n", err)
+		return nil, fmt.Errorf("Announcement message failed to deliver: %v\n", err)
 	}
 
-	go c.presence()
+	go c.presence(cmn)
 
-	return c, nil
+	return &c, nil
 }
 
-func (client *LocalClient) presence() {
+func (client *LocalClient) presence(cmn *ClientManagementNetwork) {
 	for {
 		time.Sleep(1 * time.Minute)
 		msg := avalanchecore.CMNMessage{
@@ -100,7 +91,7 @@ func (client *LocalClient) presence() {
 				},
 			},
 		}
-		if err := client.cmn.broadcast(&msg); err != nil {
+		if err := cmn.broadcast(&msg); err != nil {
 			fmt.Printf("Failed to send presence notification: %v\n", err)
 			continue
 		}
@@ -124,36 +115,38 @@ func (client *LocalClient) presence() {
 	}
 }
 
-func (client *LocalClient) handleMessage(errors chan<- error) {
+func (client *LocalClient) handleMessage(cmn *ClientManagementNetwork) {
 	for {
-		m := <-client.cmn.MessagesReceived
+		m := <-cmn.MessagesReceived
 
 		switch m.Message.(type) {
 		case *avalanchecore.CMNMessage_Announce:
 			ann := m.GetAnnounce()
 			go func() {
-				err := client.handleAnnounce(ann)
+				err := client.handleAnnounce(ann, cmn)
 				if err != nil {
-					errors <- fmt.Errorf("Failed to handle announcement %v\n", err)
+					fmt.Printf("Failed to handle announcement %v\n", err)
 				}
 			}()
 		case *avalanchecore.CMNMessage_AnnounceReply:
 			aRep := m.GetAnnounceReply()
 			err := client.handleAnnounceReply(aRep)
 			if err != nil {
-				errors <- fmt.Errorf("Could not handle announcement reply: %v\n", err)
+				fmt.Printf("Could not handle announcement reply: %v\n", err)
+				continue
 			}
 		case *avalanchecore.CMNMessage_Presence:
 			presence := m.GetPresence()
-			err := client.handlePresence(presence)
+			err := client.handlePresence(presence, cmn)
 			if err != nil {
-				errors <- fmt.Errorf("Could not handle presence message: %v\n", err)
+				fmt.Printf("Could not handle presence message: %v\n", err)
+				continue
 			}
 		}
 	}
 }
 
-func (client *LocalClient) handleAnnounce(ann *avalanchecore.AvalancheClient) error {
+func (client *LocalClient) handleAnnounce(ann *avalanchecore.AvalancheClient, cmn *ClientManagementNetwork) error {
 	clientId, err := uuid.Parse(ann.ClientId)
 	if err != nil {
 		return fmt.Errorf("Invalid client ID received in announcment: %v\n", ann.ClientId)
@@ -183,6 +176,7 @@ func (client *LocalClient) handleAnnounce(ann *avalanchecore.AvalancheClient) er
 	}
 	client.clientTableMu.Unlock()
 
+	// Delay for a random period of time between 0-50ms to avoid all clients responding simultaneously
 	delay := rand.Intn(50)
 	time.Sleep(time.Duration(delay) * time.Millisecond)
 
@@ -197,7 +191,7 @@ func (client *LocalClient) handleAnnounce(ann *avalanchecore.AvalancheClient) er
 			},
 		},
 	}
-	err = client.cmn.send(&msg, addr)
+	err = cmn.send(&msg, addr)
 	if err != nil {
 		return fmt.Errorf("Could not send announcement to %v: %v\n", addr, err)
 	}
@@ -234,7 +228,7 @@ func (client *LocalClient) handleAnnounceReply(p *avalanchecore.AvalancheClient)
 	return nil
 }
 
-func (client *LocalClient) handlePresence(p *avalanchecore.Presence) error {
+func (client *LocalClient) handlePresence(p *avalanchecore.Presence, cmn *ClientManagementNetwork) error {
 	clientId, err := uuid.Parse(p.ClientId)
 	if err != nil {
 		return fmt.Errorf("Invalid client ID received in announcment: %v\n", p.ClientId)
@@ -265,7 +259,7 @@ func (client *LocalClient) handlePresence(p *avalanchecore.Presence) error {
 				},
 			},
 		}
-		err = client.cmn.send(&msg, addr)
+		err = cmn.send(&msg, addr)
 		if err != nil {
 			return fmt.Errorf("Could not announce to client: %v\n", err)
 		}
