@@ -31,11 +31,13 @@ type avalancheClient struct {
 type remoteClient struct {
 	avalancheClient
 	LastSeenTime time.Time
+	TimeOffsets  *RollingAvg
 	Quality      LinkQuality
 }
 
 type LocalClient struct {
 	avalancheClient
+	timeOffset    int64
 	clientTableMu sync.RWMutex
 	ClientTable   map[uuid.UUID]*remoteClient
 	StreamTable   map[uint16]remoteStream
@@ -81,13 +83,14 @@ func InitializeClient(cmnAddress string) (*LocalClient, error) {
 
 func (client *LocalClient) presence(cmn *ClientManagementNetwork) {
 	for {
-		time.Sleep(1 * time.Minute)
+		time.Sleep(1 * time.Second)
 		msg := avalanchecore.CMNMessage{
 			Message: &avalanchecore.CMNMessage_Presence{
 				Presence: &avalanchecore.Presence{
 					Version:     AvalancheVersion,
 					ClientId:    client.ClientID.String(),
 					Destination: client.Destination.String(),
+					Timestamp:   client.syncedTime(),
 				},
 			},
 		}
@@ -95,7 +98,11 @@ func (client *LocalClient) presence(cmn *ClientManagementNetwork) {
 			fmt.Printf("Failed to send presence notification: %v\n", err)
 			continue
 		}
-		timeoutDuration := 10 * time.Minute
+
+		fmt.Printf("Current offset: %d\n", client.timeOffset)
+
+		// Clean up dead connections
+		timeoutDuration := 1 * time.Minute
 		var deadClients []uuid.UUID
 
 		client.clientTableMu.RLock()
@@ -171,6 +178,7 @@ func (client *LocalClient) handleAnnounce(ann *avalanchecore.AvalancheClient, cm
 			Capabilities: []ClientCapability{},
 			ASPVersion:   uint8(ann.Version),
 		},
+		TimeOffsets:  NewRollingAvg(10),
 		LastSeenTime: time.Now(),
 		Quality:      LinkQuality{},
 	}
@@ -221,6 +229,7 @@ func (client *LocalClient) handleAnnounceReply(p *avalanchecore.AvalancheClient)
 			ASPVersion:   uint8(p.Version),
 		},
 		LastSeenTime: time.Now(),
+		TimeOffsets:  NewRollingAvg(10),
 		Quality:      LinkQuality{},
 	}
 	client.clientTableMu.Unlock()
@@ -267,7 +276,19 @@ func (client *LocalClient) handlePresence(p *avalanchecore.Presence, cmn *Client
 	} else {
 		client.clientTableMu.Lock()
 		client.ClientTable[clientId].LastSeenTime = time.Now()
+		o := p.Timestamp - client.syncedTime()
+		client.ClientTable[clientId].TimeOffsets.Push(o)
+
 		client.clientTableMu.Unlock()
+
+		// Compute the new average offset
+		client.clientTableMu.RLock()
+		var allOffset int64
+		for _, v := range client.ClientTable {
+			allOffset += v.TimeOffsets.Avg()
+		}
+		client.timeOffset = allOffset / int64(len(client.ClientTable))
+		client.clientTableMu.RUnlock()
 	}
 
 	return nil
@@ -287,4 +308,9 @@ func (client *LocalClient) InitStream() AvalancheStream {
 	// Perform AvalancheStream handshake
 
 	return s
+}
+
+func (client *LocalClient) syncedTime() int64 {
+	systemTime := time.Now()
+	return systemTime.UnixNano() + client.timeOffset
 }

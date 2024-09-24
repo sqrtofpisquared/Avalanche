@@ -15,6 +15,7 @@ message Presence {
   uint32 version = 1;
   string client_id = 2;
   string destination = 3;
+  int64 timestamp = 4;
 }
 
 message AvalancheClient {

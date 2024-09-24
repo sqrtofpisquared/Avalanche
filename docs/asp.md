@@ -566,78 +566,15 @@ The Client Management Network protocol is designed with extensibility in mind:
 
 ## 6. Time Synchronization
 
-Precise time synchronization is crucial for the Avalanche system, especially for applications requiring tight coordination across multiple devices. ASP implements a robust synchronization mechanism within the client management network.
+Precise time synchronization is crucial for the Avalanche system, as streams require tight synchronization across 
+multiple devices. The time synchronization in ASP aims to achieve roughly millisecond accuracy across all clients 
+in the network. It uses a simple averaged delay approach to compute the time offset.
 
-### 6.1 Synchronization Overview
+### 6.1 Average Time Offsets
 
-The time synchronization in ASP aims to achieve sub-millisecond accuracy across all clients in the network. It uses a distributed consensus approach, where all clients contribute to determining the network time.
+When a client joins the network, it starts with a time offset of 0. Every time the client receives a presence message,
+it computes the offset for that client as the difference between the local time and the time in the message. It then
+computes the average of the offsets from all clients to determine the final time offset.
 
-### 6.2 Synchronization Process
-
-#### 6.2.1 Initial Synchronization
-
-When a client joins the network, it undergoes an initial synchronization process:
-
-1. **Time Request**: The new client sends a time request message to all known clients.
-
-2. **Response Collection**: Each client responds with its current time and estimated error.
-
-3. **Offset Calculation**: The new client calculates its offset from the network time using a weighted average of the responses, giving more weight to responses with lower estimated errors.
-
-4. **Local Clock Adjustment**: The client adjusts its local clock based on the calculated offset.
-
-#### 6.2.2 Continuous Synchronization
-
-To maintain accurate time across the network:
-
-1. **Periodic Sync Rounds**: Every minute, a synchronization round is initiated.
-
-2. **Round Initiator**: The client with the lowest Client ID that hasn't initiated a round recently becomes the initiator.
-
-3. **Sync Messages**: The initiator sends a sync message containing its current time to all other clients.
-
-4. **Response and Calculation**: Each client responds with its time. The initiator calculates the offset for each client.
-
-5. **Offset Distribution**: The initiator sends the calculated offsets to all clients.
-
-6. **Clock Adjustment**: Each client adjusts its clock based on the received offset.
-
-### 6.3 Precision Enhancements
-
-To achieve the highest possible precision, ASP employs several advanced techniques:
-
-#### 6.3.1 Hardware Timestamp Support
-
-For network interfaces that support hardware timestamping:
-
-1. **Timestamp Extraction**: The exact transmission and reception times of sync packets are captured at the hardware level.
-
-2. **Improved Accuracy**: This eliminates variability introduced by operating system scheduling and network stack processing.
-
-#### 6.3.2 Clock Drift Estimation
-
-1. **Drift Tracking**: Clients track their clock drift relative to the network time over multiple sync rounds.
-
-2. **Rate Adjustment**: In addition to adjusting the clock offset, clients also adjust their clock rate to match the network rate more closely.
-
-#### 6.3.3 Path Asymmetry Compensation
-
-1. **Round-Trip Measurement**: Clients measure and share the round-trip times to each other client.
-
-2. **Asymmetry Estimation**: By comparing round-trip times between pairs of clients, the system can estimate and compensate for network path asymmetries.
-
-### 6.4 Synchronization Performance Monitoring
-
-To ensure the synchronization system is performing optimally:
-
-1. **Error Estimation**: Each client continuously estimates its synchronization error based on observed differences with other clients.
-
-2. **Performance Logging**: Synchronization performance metrics are logged, including:
-   - Maximum observed offset
-   - Average synchronization error
-   - Number of adjustments made
-
-3. **Alerting**: If synchronization errors exceed predefined thresholds, alerts are generated to notify system administrators.
-
-By implementing this comprehensive time synchronization system, ASP ensures that all clients in the Avalanche network maintain a highly accurate, shared notion of time. This precise synchronization enables advanced features like multi-device audio/video synchronization, accurate input timing for gaming applications, and precise event ordering in distributed applications.
-
+This synchronization method is WIP - more details to be added. Depending on need, may add a sliding window per-client
+to smooth out jitter.
