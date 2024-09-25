@@ -2,10 +2,8 @@ package avalanchecore
 
 const (
 	P_DATA int = 1
-	P_INIT int = 2
-	P_FIN  int = 3
-	P_ACK  int = 4
-	P_NACK int = 5
+	P_FIN  int = 2
+	P_ACK  int = 3
 )
 
 type CommonHeader struct {
@@ -24,14 +22,6 @@ type DataPacket struct {
 	Payload       []byte
 }
 
-type InitPacket struct {
-	CommonHeader
-	StreamType       uint32
-	InitSequence     uint64
-	ParamBlockLength uint32
-	ParamBlock       []byte
-}
-
 type FinPacket struct {
 	CommonHeader
 	FinalSequenceNumber uint64
@@ -42,10 +32,4 @@ type AckPacket struct {
 	CommonHeader
 	AckSequenceStart uint64
 	AckBitmap        []uint64
-}
-
-type NackPacket struct {
-	CommonHeader
-	NackSequenceStart uint64
-	NackBitmap        []uint64
 }

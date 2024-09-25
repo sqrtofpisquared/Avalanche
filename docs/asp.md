@@ -100,10 +100,8 @@ Every ASP packet begins with a common header:
 ASP defines the following packet types:
 
 1. **DATA**: Carries the actual stream payload.
-2. **INIT**: Used for stream initialization.
-3. **FIN**: Indicates the end of a stream.
-4. **ACK**: Acknowledges receipt of critical packets.
-5. **NACK**: Indicates non-receipt or corruption of packets.
+2. **FIN**: Indicates the end of a stream.
+3. **ACK**: Acknowledges receipt of critical packets.
 
 ### 3.3 DATA Packet
 
@@ -129,34 +127,6 @@ The DATA packet is the primary carrier of stream content:
 - **Reserved** (24 bits): Reserved for future use.
 - **Payload Length** (32 bits): Length of the payload in bytes.
 - **Payload**: The actual stream data.
-
-### 3.4 INIT Packet
-
-The INIT packet is used to initialize a stream:
-
-```
- 0                   1                   2                   3
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                         Common Header                          |
-|                              ...                               |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                       Stream Type ID                           |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                   Initial Sequence Number                      |
-|                                                                |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                    Parameter Block Length                      |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                       Parameter Block                          |
-|                              ...                               |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-```
-
-- **Stream Type ID** (32 bits): Identifies the type of stream (e.g., video, audio, input device).
-- **Initial Sequence Number** (64 bits): Starting sequence number for the stream.
-- **Parameter Block Length** (32 bits): Length of the parameter block in bytes.
-- **Parameter Block**: Stream-specific parameters (e.g., codec settings, frame rate).
 
 ### 3.5 FIN Packet
 
@@ -193,35 +163,16 @@ The ACK packet acknowledges receipt of packets:
 |                  Acknowledged Sequence Number                  |
 |                                                                |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      Subsequent Count                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                   Acknowledgment Bitmap                        |
 |                              ...                               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-- **Acknowledged Sequence Number** (64 bits): The highest contiguously received sequence number.
-- **Acknowledgment Bitmap** (Variable length): Bitmap indicating receipt status of subsequent packets.
-
-### 3.7 NACK Packet
-
-The NACK packet indicates non-receipt or corruption of packets:
-
-```
- 0                   1                   2                   3
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                         Common Header                          |
-|                              ...                               |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                     NACK Sequence Number                       |
-|                                                                |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                        NACK Bitmap                             |
-|                              ...                               |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-```
-
-- **NACK Sequence Number** (64 bits): The starting sequence number of the NACK range.
-- **NACK Bitmap** (Variable length): Bitmap indicating which subsequent packets were not received or were corrupted.
+- **Acknowledged Sequence Number** (64 bits): An initial sequence number 
+- **Subsequent Count** (32 bits): The number of subsequent packets acknowledged in this ACK.
+- **Acknowledgment Bitmap** (Variable length): Bitmap indicating receipt status of subsequent packets (1 bit per packet, 1 = received, 0 = missing). Note that this will be chunked into 64-bit words, and the number of words will be determined by the subsequent count, rounding up to the nearest word.
 
 ## 4. Protocol Operations
 
@@ -229,33 +180,17 @@ ASP defines a set of operations for managing streams within the context of the c
 
 ### 4.1 Stream Initialization
 
-Stream initialization in ASP is a streamlined process, leveraging information already exchanged through the client management network.
+Stream initialization in ASP is a streamlined process, that utilizes the client management network for negotiation and coordination:
 
-1. **Pre-initialization**:
-   - The client management network has already exchanged capability information and negotiated basic parameters.
-   - Time synchronization is maintained by the client management network.
+1. **Connect Request**: The clients communicate over the client management network to negotiate stream parameters and capabilities, and a proposed 16-bit stream ID.
+2. **Negotiation**: The receiving client checks its capabilities and resources to determine if it can accept the stream. If it can, it replies with a connect acknowledgment with a confirmation. If it cannot, it replies with a connect acknowledgment with a rejection specifying the reason.
+3. **Synchronization**: At point of stream initialization, both sending and receiving clients should be actively time-synchronized in the client management network.
+4. **Stream ID reservation**: The sending client broadcasts the agreed stream ID to all clients in the network to reserve it.
+5. **Conflict Resolution**: If a client receives a reservation announcement for a stream ID it is already using, it should gracefully terminate its stream and free up the ID. This should be an uncommon occurrence.
+6. **Abuse Detection**: If a client repeatedly reserves stream IDs that are already in use (more than twice in a short period), the client that detects this should report it to the client management network in a KICK request, requesting all clients ignore the offending client's messages.
+7. **Listening**: The receiving client opens a port to listen for incoming stream data.
 
-2. **INIT Packet**:
-   - The sender constructs an INIT packet with:
-     * Stream Type ID (based on pre-negotiated capabilities)
-     * Initial Sequence Number
-     * Stream-specific parameters
-
-3. **INIT Transmission**:
-   - The sender transmits the INIT packet to the receiver.
-   - This packet is sent reliably (with retransmission if necessary) to ensure delivery.
-
-4. **Receiver Processing**:
-   - The receiver processes the INIT packet.
-   - If the stream parameters are acceptable, it prepares to receive DATA packets.
-
-5. **ACK Response**:
-   - The receiver sends an ACK packet to confirm successful initialization.
-
-6. **Stream Commencement**:
-   - Upon receiving the ACK, the sender can immediately begin transmitting DATA packets.
-
-This process is typically completed in a single round-trip, allowing for near-immediate stream start.
+As clients should already know each other's capabilities and resources from the client management network, the stream initialization process should be as simple as a single round-trip negotiation most of the time.
 
 ### 4.2 Data Transmission
 
@@ -276,25 +211,19 @@ Once a stream is initialized, data transmission proceeds as follows:
 
 ### 4.3 Acknowledgment and Loss Handling
 
-ASP uses a selective acknowledgment system to handle packet loss:
+ASP uses a batched acknowledgment system to detect packet loss:
 
 1. **Periodic ACKs**:
    - The receiver periodically sends ACK packets.
    - These ACKs include:
-     * The highest contiguously received sequence number
-     * A bitmap of subsequently received packets
+     * An initial contiguously received sequence number
+     * A count of subsequent packets acknowledge in this ACK
+     * A bitmap of subsequently received packets, where each bit represents that packets status (success or failure)
 
-2. **NACK Generation**:
-   - If the receiver detects missing packets, it sends a NACK packet.
-   - The NACK includes the sequence numbers of missing packets.
-
-3. **Sender Response**:
-   - The sender uses ACKs and NACKs to track which packets have been successfully received.
-   - For non-time-critical data, the sender may retransmit lost packets.
-   - For real-time streams, the sender may skip retransmission and adjust future packets to compensate for the loss.
-
-4. **Adaptive Behavior**:
-   - The sender uses loss information to adapt its transmission strategy, potentially adjusting parameters like encoding quality or packet size.
+2. **Sender Adaptation**:
+   - The sender uses ACKs to track which packets have been successfully received.
+   - The sender will not retransmit lost packets, as they will be out-of-date by the time they are received.
+   - The sender uses ACKs to adjust its transmission strategy, possibly by reducing packet size, increasing data-redundancy, or adjusting bitrate.
 
 ### 4.4 Stream Termination
 
@@ -319,17 +248,14 @@ Stream termination in ASP is designed to be clean and efficient:
 
 ASP includes mechanisms for handling various error conditions:
 
-1. **Initialization Failures**:
-   - If an INIT packet is not acknowledged, the sender may retry a limited number of times before reporting failure to the higher layers.
-
-2. **Unrecoverable Packet Loss**:
+1. **Unrecoverable Packet Loss**:
    - In cases of severe packet loss, ASP may trigger a stream reset or termination.
 
-3. **Timeout Handling**:
+2. **Timeout Handling**:
    - If no packets are received for a stream within a specified timeout period, the receiver may initiate termination.
 
-4. **Client Failure**:
-   - The client management network detects client failures and notifies ASP, which then terminates affected streams.
+3. **Client Failure**:
+   - Clients should receive notification of client failures from the client management network, which may trigger stream termination.
 
 ### 4.6 Quality of Service
 
