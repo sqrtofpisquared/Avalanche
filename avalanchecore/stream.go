@@ -3,7 +3,12 @@ package avalanchecore
 import "net"
 
 type AvalancheStream struct {
-	StreamId    uint16
-	Sequence    uint64
-	Destination net.Addr
+	StreamId   uint16
+	Sequence   uint64
+	ListenAddr *net.UDPAddr
+}
+
+func StartStream() *AvalancheStream {
+
+	return nil
 }

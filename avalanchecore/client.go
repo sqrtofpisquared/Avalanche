@@ -294,20 +294,46 @@ func (client *LocalClient) handlePresence(p *avalanchecore.Presence, cmn *Client
 	return nil
 }
 
-func (client *LocalClient) InitStream() AvalancheStream {
-	var s AvalancheStream
+func (client *LocalClient) handleStreamRequest(req *avalanchecore.StreamRequest, cmn *ClientManagementNetwork) error {
+	requesterId, err := uuid.Parse(req.ClientId)
+	if err != nil {
+		return fmt.Errorf("Invalid client id received in stream request\n")
+	}
 
-	// Communicate with CMN to agree on a new AvalancheStream ID
+	receiverId, err := uuid.Parse(req.TargetId)
+	if err != nil || receiverId != client.ClientID {
+		return fmt.Errorf("Invalid target id received in stream request\n")
+	}
 
-	// Reference client table to find destination client
+	client.clientTableMu.RLock()
+	requester, ok := client.ClientTable[requesterId]
+	client.clientTableMu.RUnlock()
+	if !ok {
+		return fmt.Errorf("Received stream request from unknown client %v\n", requesterId)
+	}
 
-	// Negotiate connection with destination client over CMN
+	// TODO evaluate if stream type and parameters are supported
 
-	// Announce stream to CMN
+	// Create a new stream object & begin listening
+	// Stream object will handle ASP stream handshake and everything stream-specific
 
-	// Perform AvalancheStream handshake
+	accept := avalanchecore.CMNMessage{
+		Message: &avalanchecore.CMNMessage_StreamRequestReply{
+			StreamRequestReply: &avalanchecore.StreamRequestReply{
+				ClientId:    client.ClientID.String(),
+				TargetId:    requester.ClientID.String(),
+				ListeningOn: "",
+				Accept:      true,
+			},
+		},
+	}
 
-	return s
+	err = cmn.send(&accept, &requester.Destination)
+	if err != nil {
+		return fmt.Errorf("Failed to send stream request reply to %v\n", requesterId)
+	}
+
+	return nil
 }
 
 func (client *LocalClient) syncedTime() int64 {
