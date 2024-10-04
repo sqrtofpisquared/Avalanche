@@ -8,7 +8,14 @@ import (
 )
 
 func main() {
-	client, err := avalanchecore.InitializeClient("239.0.0.12:5515")
+	fmt.Println("Attempting connection to CMN...")
+	cmnAddress := "239.0.0.12:5515"
+	cmn, err := avalanchecore.CMNConnect(cmnAddress)
+	if err != nil {
+		fmt.Printf("Could not establish CMN connection to %v: %v\n", cmnAddress, err)
+	}
+
+	client, err := avalanchecore.InitializeClient(cmn)
 	if err != nil {
 		fmt.Printf("%v\n", err)
 		return

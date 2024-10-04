@@ -43,17 +43,10 @@ type LocalClient struct {
 	StreamTable   map[uint16]remoteStream
 }
 
-func InitializeClient(cmnAddress string) (*LocalClient, error) {
+func InitializeClient(cmn *ClientManagementNetwork) (*LocalClient, error) {
 	var c LocalClient
 	c.ClientTable = make(map[uuid.UUID]*remoteClient)
 	c.StreamTable = make(map[uint16]remoteStream)
-
-	fmt.Println("Attempting connection to CMN...")
-	cmn, err := cmnConnect(cmnAddress)
-	if err != nil {
-		return nil, fmt.Errorf("Could not establish CMN connection: %v\n", err)
-	}
-
 	c.Destination = *cmn.LocalAddr
 	c.ClientID = uuid.New()
 
@@ -79,6 +72,47 @@ func InitializeClient(cmnAddress string) (*LocalClient, error) {
 	go c.presence(cmn)
 
 	return &c, nil
+}
+
+func (client *LocalClient) StartStream(toClient uuid.UUID, cmn *ClientManagementNetwork) error {
+	client.clientTableMu.RLock()
+	target, ok := client.ClientTable[toClient]
+	client.clientTableMu.RUnlock()
+
+	if !ok {
+		return fmt.Errorf("Unknown client %v\n", toClient)
+	}
+
+	// TODO check if we have any streams presently active with this client. Get the next available stream ID
+	streamId := 0
+
+	if streamId > 65535 {
+		return fmt.Errorf("Too many stream open with client %v - maximum permitted is 65535\n", toClient)
+	}
+
+	msg := &avalanchecore.CMNMessage{
+		Message: &avalanchecore.CMNMessage_StreamRequest{
+			StreamRequest: &avalanchecore.StreamRequest{
+				Version:    AvalancheVersion,
+				ClientId:   client.ClientID.String(),
+				TargetId:   target.ClientID.String(),
+				StreamId:   uint32(streamId),
+				StreamType: "TODO",
+				Parameters: map[string]string{
+					// TODO get stream parameters
+				},
+			},
+		},
+	}
+
+	err := cmn.send(msg, &target.Destination)
+	if err != nil {
+		return fmt.Errorf("Failed to send stream request to client %v\n", toClient)
+	}
+
+	// TODO wait to receive reply - up to 10 seconds
+
+	return nil
 }
 
 func (client *LocalClient) presence(cmn *ClientManagementNetwork) {

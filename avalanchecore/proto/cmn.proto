@@ -31,7 +31,7 @@ message StreamRequest {
   uint32 version = 1;
   string client_id = 2;
   string target_id = 3;
-  int32 stream_id = 4;
+  uint32 stream_id = 4;
   string stream_type = 5;
   map<string, string> parameters = 6;
 }

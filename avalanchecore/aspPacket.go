@@ -6,16 +6,21 @@ const (
 	P_ACK  int = 3
 )
 
+const (
+	HEADER_SIZE_BYTES   int = 12
+	DATA_RESERVED_BYTES int = 16
+)
+
 type CommonHeader struct {
 	Version    uint8
 	PacketType uint8
 	StreamId   uint16
 	Sequence   uint64
-	Timestamp  uint64
 }
 
 type DataPacket struct {
 	CommonHeader
+	Timestamp     uint64
 	Flags         byte
 	Reserved      [3]byte
 	PayloadLength uint32

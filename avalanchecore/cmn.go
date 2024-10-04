@@ -21,7 +21,7 @@ type ClientManagementNetwork struct {
 	MessagesReceived chan *avalanchecore.CMNMessage
 }
 
-func cmnConnect(address string) (*ClientManagementNetwork, error) {
+func CMNConnect(address string) (*ClientManagementNetwork, error) {
 	bAddr, err := net.ResolveUDPAddr("udp", address)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to resolve CMN multicast address\n")
@@ -88,7 +88,7 @@ func (cmn *ClientManagementNetwork) broadcast(msg *avalanchecore.CMNMessage) err
 
 func (cmn *ClientManagementNetwork) send(msg *avalanchecore.CMNMessage, addr *net.UDPAddr) error {
 	// Open a new UDP
-	conn, err := net.DialUDP("udp", nil, addr)
+	conn, err := net.DialUDP("udp", nil, addr) // TODO this should be TCP
 	if err != nil {
 		return fmt.Errorf("Failed to connect to %v: %v\n", addr, err)
 	}
