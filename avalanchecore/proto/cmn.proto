@@ -31,9 +31,8 @@ message StreamRequest {
   uint32 version = 1;
   string client_id = 2;
   string target_id = 3;
-  uint32 stream_id = 4;
-  string stream_type = 5;
-  map<string, string> parameters = 6;
+  string stream_type = 4;
+  map<string, string> parameters = 5;
 }
 
 message StreamRequestReply {
@@ -41,7 +40,8 @@ message StreamRequestReply {
   string client_id = 2;
   string target_id = 3;
   string listening_on = 4;
-  bool accept = 5;
+  uint32 stream_id = 5;
+  bool accept = 6;
 }
 
 message Capability {

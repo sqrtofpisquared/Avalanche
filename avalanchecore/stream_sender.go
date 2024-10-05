@@ -9,16 +9,15 @@ import (
 	"sync"
 )
 
-type AvalancheStream struct {
+type AvalancheSender struct {
 	StreamId      uint16
-	FromAddr      *net.UDPAddr
-	ToAddr        *net.UDPAddr
 	data          chan ClientPacket
-	errors        chan error
-	connection    *net.UDPConn
+	ToAddr        *net.UDPAddr
 	sequence      uint64
 	sequenceLock  sync.Mutex
 	maxPacketSize int
+	errors        chan error
+	connection    *net.UDPConn
 	cancelFunc    context.CancelFunc
 }
 
@@ -28,7 +27,7 @@ type ClientPacket struct {
 	DesiredTime uint64
 }
 
-func StartSender(id uint16, from *net.UDPAddr, to *net.UDPAddr, maxPacketSize int) (*AvalancheStream, error) {
+func StartSender(id uint16, to *net.UDPAddr, maxPacketSize int) (*AvalancheSender, error) {
 	conn, err := net.DialUDP("udp", nil, to)
 	if err != nil {
 		return nil, err
@@ -38,16 +37,15 @@ func StartSender(id uint16, from *net.UDPAddr, to *net.UDPAddr, maxPacketSize in
 	errorChan := make(chan error, 1024)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	s := AvalancheStream{
+	s := AvalancheSender{
 		id,
-		from,
-		to,
 		data,
-		errorChan,
-		conn,
+		to,
 		0,
 		sync.Mutex{},
 		maxPacketSize,
+		errorChan,
+		conn,
 		cancel,
 	}
 
@@ -56,35 +54,7 @@ func StartSender(id uint16, from *net.UDPAddr, to *net.UDPAddr, maxPacketSize in
 	return &s, nil
 }
 
-func StartReceiver(id uint16, listen *net.UDPAddr, maxPacketSize int) (*AvalancheStream, error) {
-	conn, err := net.ListenUDP("udp", listen)
-	if err != nil {
-		return nil, err
-	}
-
-	data := make(chan ClientPacket, 1024)
-	errorChan := make(chan error, 1024)
-	ctx, cancel := context.WithCancel(context.Background())
-
-	s := AvalancheStream{
-		id,
-		nil,
-		listen,
-		data,
-		errorChan,
-		conn,
-		0,
-		sync.Mutex{},
-		maxPacketSize,
-		cancel,
-	}
-
-	go s.receiveWorker(ctx)
-
-	return &s, nil
-}
-
-func (s *AvalancheStream) nextHeader(pType int) CommonHeader {
+func (s *AvalancheSender) nextHeader(pType int) CommonHeader {
 	s.sequenceLock.Lock()
 	s.sequence++
 
@@ -99,7 +69,7 @@ func (s *AvalancheStream) nextHeader(pType int) CommonHeader {
 	return h
 }
 
-func (s *AvalancheStream) sendWorker(ctx context.Context) {
+func (s *AvalancheSender) sendWorker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -143,47 +113,12 @@ func (s *AvalancheStream) sendWorker(ctx context.Context) {
 	}
 }
 
-func (s *AvalancheStream) receiveWorker(ctx context.Context) {
-	buf := make([]byte, s.maxPacketSize)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			n, _, err := s.connection.ReadFromUDP(buf)
-			if err != nil {
-				s.errors <- fmt.Errorf("Failed to read from UDP: %v\n", err)
-			}
-
-			var dp DataPacket
-			decoder := gob.NewDecoder(bytes.NewReader(buf[:n]))
-			err = decoder.Decode(&dp)
-			if err != nil {
-				s.errors <- fmt.Errorf("Failed to deserialize packet: %v\n", err)
-				continue
-			}
-
-			packet := ClientPacket{
-				Flags:       dp.Flags,
-				Payload:     dp.Payload,
-				DesiredTime: dp.Timestamp,
-			}
-
-			s.data <- packet
-		}
-	}
-}
-
-func (s *AvalancheStream) Close() {
+func (s *AvalancheSender) Close() {
 	s.cancelFunc()
-	close(s.data)
 	close(s.errors)
+	close(s.data)
 }
 
-func (s *AvalancheStream) Errors() <-chan error {
-	return s.errors
-}
-
-func (s *AvalancheStream) Data() chan ClientPacket {
+func (s *AvalancheSender) Data() chan<- ClientPacket {
 	return s.data
 }

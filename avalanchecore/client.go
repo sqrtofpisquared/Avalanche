@@ -10,10 +10,6 @@ import (
 	"time"
 )
 
-const (
-	AvalancheVersion = 1
-)
-
 type ClientCapability struct {
 }
 
@@ -41,6 +37,7 @@ type LocalClient struct {
 	clientTableMu sync.RWMutex
 	ClientTable   map[uuid.UUID]*remoteClient
 	StreamTable   map[uint16]remoteStream
+	Receiver      *AvalancheReceiver
 }
 
 func InitializeClient(cmn *ClientManagementNetwork) (*LocalClient, error) {
@@ -49,6 +46,11 @@ func InitializeClient(cmn *ClientManagementNetwork) (*LocalClient, error) {
 	c.StreamTable = make(map[uint16]remoteStream)
 	c.Destination = *cmn.LocalAddr
 	c.ClientID = uuid.New()
+	r, err := StartReceiver(1024)
+	if err != nil {
+		return nil, fmt.Errorf("Could not set up stream receiver: %v\n", err)
+	}
+	c.Receiver = r
 
 	go c.handleMessage(cmn)
 
@@ -83,20 +85,12 @@ func (client *LocalClient) StartStream(toClient uuid.UUID, cmn *ClientManagement
 		return fmt.Errorf("Unknown client %v\n", toClient)
 	}
 
-	// TODO check if we have any streams presently active with this client. Get the next available stream ID
-	streamId := 0
-
-	if streamId > 65535 {
-		return fmt.Errorf("Too many stream open with client %v - maximum permitted is 65535\n", toClient)
-	}
-
 	msg := &avalanchecore.CMNMessage{
 		Message: &avalanchecore.CMNMessage_StreamRequest{
 			StreamRequest: &avalanchecore.StreamRequest{
 				Version:    AvalancheVersion,
 				ClientId:   client.ClientID.String(),
 				TargetId:   target.ClientID.String(),
-				StreamId:   uint32(streamId),
 				StreamType: "TODO",
 				Parameters: map[string]string{
 					// TODO get stream parameters
